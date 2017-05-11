@@ -33,21 +33,26 @@ class PostRes2d(nn.Module):
         out += residual
         out = self.relu(out)
         return out
-    
+
+#This is used by the real detector net
 class PostRes(nn.Module):
     def __init__(self, n_in, n_out, stride = 1):
         super(PostRes, self).__init__()
+        #conv1, used for the first layer of each block, zero padding the surronding, resolution changes according to stride
         self.conv1 = nn.Conv3d(n_in, n_out, kernel_size = 3, stride = stride, padding = 1)
         self.bn1 = nn.BatchNorm3d(n_out)
         self.relu = nn.ReLU(inplace = True)
+        #conv2, used between layers within the block, maintain the same resolution
         self.conv2 = nn.Conv3d(n_out, n_out, kernel_size = 3, padding = 1)
         self.bn2 = nn.BatchNorm3d(n_out)
 
         if stride != 1 or n_out != n_in:
+            #Define the residual term to be the same shape as the last conv3d layer
             self.shortcut = nn.Sequential(
                 nn.Conv3d(n_in, n_out, kernel_size = 1, stride = stride),
                 nn.BatchNorm3d(n_out))
         else:
+            #Otherwise, output of conv3d is of the same shape of input
             self.shortcut = None
 
     def forward(self, x):
@@ -152,6 +157,7 @@ def hard_mining(neg_output, neg_labels, num_hard):
     neg_labels = torch.index_select(neg_labels, 0, idcs)
     return neg_output, neg_labels
 
+#Loss function, real magic happens
 class Loss(nn.Module):
     def __init__(self, num_hard = 0):
         super(Loss, self).__init__()

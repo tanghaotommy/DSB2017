@@ -95,6 +95,7 @@ def savenpy(id,annos,filelist,data_path,prep_folder):
     name = filelist[id]
     label = annos[annos[:,0]==name]
     label = label[:,[3,1,2,4]].astype('float')
+    #coordZ, coordX, coordY, diameter
     
     im, m1, m2, spacing = step1_python(os.path.join(data_path,name))
     Mask = m1+m2
@@ -109,7 +110,7 @@ def savenpy(id,annos,filelist,data_path,prep_folder):
     extendbox = extendbox.astype('int')
 
 
-
+    #Preprocess the mask and segment out the lung
     convex_mask = m1
     dm1 = process_mask(m1)
     dm2 = process_mask(m2)
@@ -140,11 +141,26 @@ def savenpy(id,annos,filelist,data_path,prep_folder):
     else:
         haslabel = 1
         label2 = np.copy(label).T
+        #          nodule1 nodule2 nodule3
+        #coordZ
+        #coordY
+        #coordX
+        #diameter
         label2[:3] = label2[:3][[0,2,1]]
+
+        #Adjust coordinates according to new spacing
         label2[:3] = label2[:3]*np.expand_dims(spacing,1)/np.expand_dims(resolution,1)
+
+        #Adjust the diameter of the nodule
         label2[3] = label2[3]*spacing[1]/resolution[1]
+
+        #I do not understand what extendbox is used for, might because of their segmentation
         label2[:3] = label2[:3]-np.expand_dims(extendbox[:,0],1)
+
+        #coordZ, coordY, coordX, diameter
         label2 = label2[:4].T
+
+    #save to this file
     np.save(os.path.join(prep_folder,name+'_label.npy'),label2)
 
     print(name)

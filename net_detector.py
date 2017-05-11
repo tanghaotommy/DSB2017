@@ -61,6 +61,10 @@ class Net(nn.Module):
                     blocks.append(PostRes(self.featureNum_forw[i], self.featureNum_forw[i+1]))
                 else:
                     blocks.append(PostRes(self.featureNum_forw[i+1], self.featureNum_forw[i+1]))
+            #forw1: 2 blocks of postRes(2 conv3d), input feature 24, output feature 32
+            #forw2: 2 blocks of postRes(2 conv3d), input feature 32, output feature 64
+            #forw3: 3 blocks of postRes(2 conv3d), input feature 64, output feature 64
+            #forw4: 3 blocks of postRes(2 conv3d), input feature 64, output feature 64
             setattr(self, 'forw' + str(i + 1), nn.Sequential(*blocks))
 
             
@@ -75,15 +79,20 @@ class Net(nn.Module):
                     blocks.append(PostRes(self.featureNum_back[i+1]+self.featureNum_forw[i+2]+addition, self.featureNum_back[i]))
                 else:
                     blocks.append(PostRes(self.featureNum_back[i], self.featureNum_back[i]))
+            #back2: 3 blocks of postRes(2 conv3d), input feature ?, output feature 128
+            #back2: 3 blocks of postRes(2 conv3d), input feature ?, output feature 64
             setattr(self, 'back' + str(i + 2), nn.Sequential(*blocks))
 
+        #Halves the resolution
         self.maxpool1 = nn.MaxPool3d(kernel_size=2,stride=2,return_indices =True)
         self.maxpool2 = nn.MaxPool3d(kernel_size=2,stride=2,return_indices =True)
         self.maxpool3 = nn.MaxPool3d(kernel_size=2,stride=2,return_indices =True)
         self.maxpool4 = nn.MaxPool3d(kernel_size=2,stride=2,return_indices =True)
+        #Double the resolution
         self.unmaxpool1 = nn.MaxUnpool3d(kernel_size=2,stride=2)
         self.unmaxpool2 = nn.MaxUnpool3d(kernel_size=2,stride=2)
 
+        #Deconvolution, upsampling the resolution
         self.path1 = nn.Sequential(
             nn.ConvTranspose3d(64, 64, kernel_size = 2, stride = 2),
             nn.BatchNorm3d(64),
@@ -99,29 +108,52 @@ class Net(nn.Module):
                                    nn.Conv3d(64, 5 * len(config['anchors']), kernel_size = 1))
 
     def forward(self, x, coord):
+        # x: 128*128*128*1
         out = self.preBlock(x)#16
         out_pool,indices0 = self.maxpool1(out)
+
+        #out_pool: 64*64*64*1*24
         out1 = self.forw1(out_pool)#32
         out1_pool,indices1 = self.maxpool2(out1)
+
+        #out1_pool: 32*32*32*1*32
         out2 = self.forw2(out1_pool)#64
         #out2 = self.drop(out2)
         out2_pool,indices2 = self.maxpool3(out2)
+
+        #out2_pool: 16*16*16*1*64
         out3 = self.forw3(out2_pool)#96
         out3_pool,indices3 = self.maxpool4(out3)
+
+        #out3_pool: 8*8*8*1*64
         out4 = self.forw4(out3_pool)#96
         #out4 = self.drop(out4)
         
+        #out4: 8*8*8*1*64
+        #rev3: 16*16*16*1*64 deconvolution(upsample the resolution)
         rev3 = self.path1(out4)
         comb3 = self.back3(torch.cat((rev3, out3), 1))#96+96
+
+        #comb3: 16*16*16*1*64
         #comb3 = self.drop(comb3)
+
+        #rev2: 32*32*32*1*64 deconvolution(upsample the resolution)
         rev2 = self.path2(comb3)
-        
+
+        #feat: 32*32*32*1*64
         feat = self.back2(torch.cat((rev2, out2,coord), 1))#64+64
         comb2 = self.drop(feat)
+
+        #final output 32*32*32*1*5(4 coordinates, 1 class)*3(number of anchors)
         out = self.output(comb2)
         size = out.size()
+
+        #dropout layer
+        #Flatten the remaining dimension except for the first two
         out = out.view(out.size(0), out.size(1), -1)
         #out = out.transpose(1, 4).transpose(1, 2).transpose(2, 3).contiguous()
+
+        #Guess, size[2][3][4] for 32*32*32, last 3 anchors with 5 parameters, size[0] for batch number, size[1] for channels
         out = out.transpose(1, 2).contiguous().view(size[0], size[2], size[3], size[4], len(config['anchors']), 5)
         #out = out.view(-1, 5)
         return out

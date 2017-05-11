@@ -35,26 +35,62 @@ class DataBowl3Detector(Dataset):
         
         labels = []
         
+        #Load data from annotations(may be preprocessed to 1x1x1 and converted to 0 - 255 and voxel coordinate)
+        #coordZ, coordY, coordX, diameter(adjusted according to new spacing)
         for idx in idcs:
             l = np.load(os.path.join(data_dir, '%s_label.npy' %idx))
             if np.all(l==0):
                 l=np.array([])
             labels.append(l)
 
+        #sample_bboxes are the all annotations
+        #bboxes are selected for training which is a subset of sample_bboxes and augmented due to different size
         self.sample_bboxes = labels
         if self.phase != 'test':
             self.bboxes = []
             for i, l in enumerate(labels):
                 if len(l) > 0 :
                     for t in l:
+                        #Balance samples for different sizes of nodules, >6mm are used, >10 doubled, >30 sixth time
                         if t[3]>sizelim:
                             self.bboxes.append([np.concatenate([[i],t])])
                         if t[3]>sizelim2:
                             self.bboxes+=[[np.concatenate([[i],t])]]*2
                         if t[3]>sizelim3:
                             self.bboxes+=[[np.concatenate([[i],t])]]*4
+
+            #These are the ground truth bounded box
             self.bboxes = np.concatenate(self.bboxes,axis = 0)
 
+        # config = {}
+        # config['anchors'] = [ 10.0, 30.0, 60.]
+        # config['chanel'] = 1
+        # config['crop_size'] = [128, 128, 128]
+        # config['stride'] = 4
+        # config['datadir'] = '/run/shm/preprocess_1_3/'
+
+        # config['max_stride'] = 16
+        # config['num_neg'] = 800
+        # config['th_neg'] = 0.02
+        # config['th_pos_train'] = 0.5
+        # config['th_pos_val'] = 1
+        # config['num_hard'] = 2
+        # config['bound_size'] = 12
+        # config['reso'] = 1
+        # config['sizelim'] = 6. #mm
+        # config['sizelim2'] = 30
+        # config['sizelim3'] = 40
+        # config['aug_scale'] = True
+        # config['r_rand_crop'] = 0.3
+        # config['pad_value'] = 170
+        # config['luna_raw'] = True
+        # config['cleanimg'] = True
+        # config['augtype'] = {'flip':True,'swap':False,'scale':True,'rotate':False}
+        # config['blacklist'] = ['868b024d9fa388b7ddab12ec1c06af38','990fbe3f0a1b53878669967b9afd1441','adc3bbc63d40f8761c59be10f1e504c3']
+
+
+        # config['lr_stage'] = np.array([50,100,120])
+        # config['lr'] = [0.01,0.001,0.0001]
         self.crop = Crop(config)
         self.label_mapping = LabelMapping(config, self.phase)
 
@@ -75,11 +111,15 @@ class DataBowl3Detector(Dataset):
         
         if self.phase != 'test':
             if not isRandomImg:
+                #Get the ground truth bounding box
                 bbox = self.bboxes[idx]
                 filename = self.filenames[int(bbox[0])]
                 imgs = np.load(filename)
                 bboxes = self.sample_bboxes[int(bbox[0])]
                 isScale = self.augtype['scale'] and (self.phase=='train')
+
+                #Crop is where real coordinates reorder happens
+                #The first column of bbox is id so no need to pass it
                 sample, target, bboxes, coord = self.crop(imgs, bbox[1:], bboxes,isScale,isRandom)
                 if self.phase=='train' and not isRandom:
                      sample, target, bboxes, coord = augment(sample, target, bboxes, coord,
@@ -170,6 +210,7 @@ def augment(sample, target, bboxes, coord, ifflip = True, ifrotate=True, ifswap 
 
 class Crop(object):
     def __init__(self, config):
+        #crop_size=128*128*12, bound_size=12, stride=4, pad_value=170
         self.crop_size = config['crop_size']
         self.bound_size = config['bound_size']
         self.stride = config['stride']
@@ -184,15 +225,23 @@ class Crop(object):
             crop_size = (np.array(self.crop_size).astype('float')/scale).astype('int')
         else:
             crop_size=self.crop_size
+        #called by self.crop(imgs, bbox[1:], bboxes,isScale,isRandom)
         bound_size = self.bound_size
+
+        #bbox, one of the nodule in the image if has more than one
         target = np.copy(target)
+
+        #bboxes, all the nodules in the image
         bboxes = np.copy(bboxes)
         
         start = []
         for i in range(3):
             if not isRand:
+                #radius is half of the diameter
                 r = target[3] / 2
+                #start (upleft corner) origin - radius - 1 - bound_size(make it bigger than just the target)
                 s = np.floor(target[i] - r)+ 1 - bound_size
+                #end
                 e = np.ceil (target[i] + r)+ 1 + bound_size - crop_size[i] 
             else:
                 s = np.max([imgs.shape[i+1]-crop_size[i]/2,imgs.shape[i+1]/2+bound_size])
@@ -270,6 +319,8 @@ class LabelMapping(object):
             assert(input_size[i] % stride == 0)
             output_size.append(input_size[i] / stride)
         
+        #Calculating each pixel of the feature map with anchor IoU
+        #32*32*32*3*5
         label = -1 * np.ones(output_size + [len(anchors), 5], np.float32)
         offset = ((stride.astype('float')) - 1) / 2
         oz = np.arange(offset, offset + stride * (output_size[0] - 1) + 1, stride)

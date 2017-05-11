@@ -100,6 +100,9 @@ def savenpy(id,filelist,prep_folder,data_path,use_existing=True):
                     extendbox[1,0]:extendbox[1,1],
                     extendbox[2,0]:extendbox[2,1]]
         sliceim = sliceim2[np.newaxis,...]
+
+        #After preprocessing the imag, save it.
+        #Question: why the label of the file is 0, 0, 0, 0. Should not this influence the label in the data detector?
         np.save(os.path.join(prep_folder,name+'_clean'),sliceim)
         np.save(os.path.join(prep_folder,name+'_label'),np.array([[0,0,0,0]]))
     except:
